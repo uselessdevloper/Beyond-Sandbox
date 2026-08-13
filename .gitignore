@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+*.db
+*.sqlite
+*.original
+.pytest_cache/
+real_target/
+harness/security_results/
