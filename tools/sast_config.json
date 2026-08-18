@@ -1,4 +1,5 @@
 {
+  
   "taint_sources": [
     "request", "input", "environ", "argv", "os.environ", "sys.argv"
   ],
@@ -20,6 +21,13 @@
       "cwe": "CWE-78",
       "sinks": ["system", "Popen", "run", "call", "check_output"],
       "regex": "" 
+    },
+
+    {
+
+      "add your new rule here...... NOTE: REMOVE THIS LINE BEFORE ADDING A NEW RULE !":""
+      
     }
+
   ]
 }
