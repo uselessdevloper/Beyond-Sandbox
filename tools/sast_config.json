@@ -1,0 +1,25 @@
+{
+  "taint_sources": [
+    "request", "input", "environ", "argv", "os.environ", "sys.argv"
+  ],
+  "rules": [
+    {
+      "id": "SQLI_001",
+      "title": "SQL Injection",
+      "severity": "HIGH",
+      "cwe": "CWE-89",
+      "sinks": [
+        "execute", "executemany", "executescript", "run_query"
+      ],
+      "regex": "^\\s*(SELECT|INSERT|UPDATE|DELETE|MERGE|UPSERT|REPLACE|DROP|ALTER|TRUNCATE|CREATE|GRANT|REVOKE|CALL|WITH)\\b"
+    },
+    {
+      "id": "CMD_001",
+      "title": "Command Injection",
+      "severity": "CRITICAL",
+      "cwe": "CWE-78",
+      "sinks": ["system", "Popen", "run", "call", "check_output"],
+      "regex": "" 
+    }
+  ]
+}
