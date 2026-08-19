@@ -471,5 +471,13 @@ def main():
         sys.exit(1)
     sys.exit(0)
 
+def scan_directory(dirpath: str) -> List[Finding]:
+    scanner = Scanner(dirpath)
+    scanner.scan()
+    return scanner.findings
+
+def format_findings(findings: List[Finding]) -> str:
+    return report_text(findings)
+
 if __name__ == "__main__":
     main()

@@ -218,73 +218,197 @@ def run():
     ok(f"{pre_confirmed}/{len(pre_results)} exploits confirmed in pre-patch baseline")
 
                                                                                 
+    history = []
     verified = False
+    patch_result = None
+
     for iteration in range(1, MAX_ITERATIONS + 1):
         header(f"PHASE 6 — Patch Generation (Iteration {iteration}/{MAX_ITERATIONS})")
 
-        if iteration > 1:
-            info("Restoring original source before re-patching …")
-            restore_original(TARGET_FILE)
+        # Always make sure the original source is clean at the start of the iteration
+        info("Restoring original source for clean patch generation …")
+        restore_original(TARGET_FILE)
 
-        info("Generating patch …")
+        info("[PATCH] Vulnerability: SQL_INJECTION")
+        info(f"[PATCH] Target: {TARGET_FILE}:{verdict.affected_line}")
+        info("Generating candidate patch...")
+        
         patch_result = generate_and_apply_patch(
             TARGET_FILE,
             verdict.root_cause,
             verdict.suggested_fix,
             iteration=iteration,
+            sast_text=sast_text,
+            fuzz_text=fuzz_text,
+            dast_text=dast_text,
+            verdict=verdict,
+            history=history,
         )
 
+        syntax_ok = patch_result.get("syntax_valid", False)
+        print(f"  [PATCH] Syntax validation: {'PASS' if syntax_ok else 'FAIL'}")
+
         if not patch_result["success"]:
-            err(f"Patch produced no changes (iteration {iteration}). Trying next.")
+            err(f"Patch generation/application failed (iteration {iteration}).")
+            # Log failure in history
+            history.append({
+                "iteration": iteration,
+                "strategy": patch_result.get("strategy", "unknown"),
+                "diff": "",
+                "syntax_valid": syntax_ok,
+                "security_details": "Failed to generate a valid/syntax-passing candidate.",
+                "functional_details": "",
+            })
+            # Make sure we clean up the file
+            restore_original(TARGET_FILE)
             continue
 
-        ok(f"Patch applied via [{patch_result['strategy']}] strategy")
+        ok(f"Temporary patch applied via [{patch_result['strategy']}] strategy")
         print(f"\n  {BOLD}Diff:{RESET}")
         print_diff(patch_result["diff"])
 
-                                                                                
         header(f"PHASE 7 — Security Replay (Iteration {iteration})")
         info("Starting patched app …")
-        patched_server = AppServer(TARGET_APP_DIR, FUZZ_PORT)
-        patched_server.start()
+        
+        security_passed = False
+        functional_passed = False
+        post_results = []
+        report = None
 
-        info("Replaying original exploits against patched app …")
-        post_results = run_security_regression(f"http://127.0.0.1:{FUZZ_PORT}", "post_patch")
-        print(format_security_report(post_results, "post_patch"))
-        security_passed = all(r.passed for r in post_results)
+        try:
+            patched_server = AppServer(TARGET_APP_DIR, FUZZ_PORT)
+            patched_server.start()
 
-                                                                                
-        header(f"PHASE 8 — Functional Regression (Iteration {iteration})")
-        info("Running pytest functional test suite …")
-        report = run_regression(REPO_ROOT)
-        print_report(report)
-        functional_passed = report.all_passed
+            info("Replaying original exploits against patched app …")
+            post_results = run_security_regression(f"http://127.0.0.1:{FUZZ_PORT}", "post_patch")
+            print(format_security_report(post_results, "post_patch"))
+            security_passed = all(r.passed for r in post_results)
 
-        patched_server.stop()
+            header(f"PHASE 8 — Functional Regression (Iteration {iteration})")
+            info("Running pytest functional test suite …")
+            report = run_regression(REPO_ROOT)
+            print_report(report)
+            functional_passed = report.all_passed
+
+            patched_server.stop()
+        except Exception as e:
+            err(f"Error during patch verification: {e}")
+            if 'patched_server' in locals():
+                try: patched_server.stop()
+                except: pass
 
         if security_passed and functional_passed:
             verified = True
+            ok("All checks passed! Patch verified successfully.")
             break
         else:
-            if not security_passed:
-                err(f"Exploit still works after patch (iteration {iteration}).")
-                                                                           
-                fail_evidence = "\n".join(
-                    f"{r.test_id}: {r.status}" for r in post_results if not r.passed
-                )
-                info(f"Evidence for re-patch: {fail_evidence}")
-            if not functional_passed:
-                err(f"Functional regression failed (iteration {iteration}).")
-            if iteration < MAX_ITERATIONS:
-                info(f"Retrying patch (iteration {iteration + 1}) …")
+            # Revert the patch immediately to maintain target safety
+            info("Verification failed. Reverting temporary patch and recording failure context …")
+            restore_original(TARGET_FILE)
 
-                                                                                
+            # Record failure context
+            sec_fail_desc = ""
+            if not security_passed:
+                err(f"[PATCH] Security verification: FAIL")
+                sec_fail_desc = "\n".join(
+                    f"{r.test_id}: {r.status} (HTTP {r.http_code})" for r in post_results if not r.passed
+                )
+                print(f"  [PATCH] Reason: Exploit payloads still succeed:\n{sec_fail_desc}")
+            else:
+                ok(f"[PATCH] Security verification: PASS")
+
+            func_fail_desc = ""
+            if not functional_passed:
+                err(f"[PATCH] Regression verification: FAIL")
+                if report and report.tests:
+                    func_fail_desc = "\n".join(
+                        f"{t.test_id}: {t.outcome} - {t.message.strip()}" for t in report.tests if t.outcome != "passed"
+                    )
+                else:
+                    func_fail_desc = "Functional tests failed to execute properly."
+                print(f"  [PATCH] Reason: Functional regressions failed:\n{func_fail_desc}")
+            else:
+                ok(f"[PATCH] Regression verification: PASS")
+
+            history.append({
+                "iteration": iteration,
+                "strategy": patch_result.get("strategy", "unknown"),
+                "diff": patch_result.get("diff", ""),
+                "syntax_valid": syntax_ok,
+                "security_details": sec_fail_desc,
+                "functional_details": func_fail_desc,
+            })
+
+            if iteration < MAX_ITERATIONS:
+                info(f"Generating repair attempt {iteration + 1} …")
+
+    # If LLM failed, try deterministic template fallback as a final option (Step 11)
+    if not verified:
+        header("FINAL FALLBACK — Applying Deterministic Template Patch")
+        restore_original(TARGET_FILE)
+        
+        info("Applying deterministic template patch …")
+        with open(TARGET_FILE, "r", encoding="utf-8") as fh:
+            source = fh.read()
+        
+        # Determine if it's the real target or regular target
+        is_real_target = "real_target_adapter" in TARGET_FILE
+        if is_real_target:
+            from agent.patch_agent import _apply_real_target_patch
+            patched_source = _apply_real_target_patch(source)
+            strategy = "real_target_template"
+        else:
+            from agent.patch_agent import _apply_template_patch
+            patched_source = _apply_template_patch(source)
+            strategy = "template"
+            
+        with open(TARGET_FILE, "w", encoding="utf-8") as fh:
+            fh.write(patched_source)
+            
+        # Verify the deterministic fallback
+        info("Verifying deterministic fallback patch …")
+        security_passed = False
+        functional_passed = False
+        
+        try:
+            fallback_server = AppServer(TARGET_APP_DIR, FUZZ_PORT)
+            fallback_server.start()
+            
+            post_results = run_security_regression(f"http://127.0.0.1:{FUZZ_PORT}", "post_patch")
+            security_passed = all(r.passed for r in post_results)
+            
+            report = run_regression(REPO_ROOT)
+            functional_passed = report.all_passed
+            
+            fallback_server.stop()
+        except Exception as e:
+            err(f"Fallback verification failed: {e}")
+            if 'fallback_server' in locals():
+                try: fallback_server.stop()
+                except: pass
+                
+        if security_passed and functional_passed:
+            verified = True
+            ok("Deterministic fallback patch verified successfully!")
+            # Generate dummy patch result for reporting
+            from agent.patch_agent import _make_diff
+            diff_text = _make_diff(source, patched_source, os.path.basename(TARGET_FILE))
+            patch_result = {
+                "strategy": strategy,
+                "diff": diff_text,
+            }
+        else:
+            err("Deterministic fallback also failed verification! Reverting target file to pristine state.")
+            restore_original(TARGET_FILE)
+
     print(f"\n{BOLD}")
     print("  ╔══════════════════════════════════════════════════════════╗")
     if verified:
         print(f"  ║  {GREEN}🛡️  VERIFIED FIX — ALL CHECKS PASSED{RESET}{BOLD}                   ║")
+        print(f"  ║  [PATCH] FINAL STATUS: VERIFIED                          ║")
     else:
         print(f"  ║  {RED}❌  REMEDIATION FAILED — MANUAL REVIEW REQUIRED{RESET}{BOLD}         ║")
+        print(f"  ║  [PATCH] FINAL STATUS: FAILED                            ║")
     print("  ╚══════════════════════════════════════════════════════════╝")
     print(f"{RESET}")
 
@@ -293,8 +417,8 @@ def run():
         print(f"  {GREEN}Functional tests    : {report.passed}/{report.total} PASSED ✓{RESET}")
         print(f"  {GREEN}Patch strategy      : {patch_result['strategy']}{RESET}")
     else:
-        print(f"  {RED}Could not produce a verified fix in {MAX_ITERATIONS} iterations.{RESET}")
-        print(f"  {YELLOW}Review the patch diff and regression results above.{RESET}")
+        print(f"  {RED}Could not produce a verified fix in {MAX_ITERATIONS} iterations plus final fallback.{RESET}")
+        print(f"  {YELLOW}Review the logs and regression results above.{RESET}")
 
     return verified
 
