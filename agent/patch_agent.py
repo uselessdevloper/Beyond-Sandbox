@@ -4,7 +4,7 @@ import sys
 import difflib
 import subprocess
 import shutil
-from typing import Optional
+from typing import Optional, Tuple
 
 
                                                                                 
@@ -192,18 +192,25 @@ def _apply_real_target_patch(source: str) -> str:
     return p
 
 
-def _gemini_patch(source: str, root_cause: str, suggested_fix: str) -> Optional[str]:
+from agent.llm_client import query_llm, get_active_provider
 
+def _extract_python_code(raw: str) -> str:
+    """Extract clean Python code from LLM response, stripping markdown fences."""
+    raw = raw.strip()
+    if "```" in raw:
+        match = re.search(r"```(?:python)?\s*\n?(.*?)\n?```", raw, re.DOTALL)
+        if match:
+            raw = match.group(1).strip()
+        else:
+            parts = raw.split("```")
+            if len(parts) >= 2:
+                raw = parts[1]
+                if raw.startswith("python"):
+                    raw = raw[6:]
+    return raw.strip()
 
-    try:
-        import google.generativeai as genai
-        api_key = os.environ.get("GOOGLE_API_KEY", "")
-        if not api_key:
-            return None
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-1.5-flash")
-
-        prompt = f"""You are a security engineer. Fix the SQL injection vulnerabilities in this Python Flask file.
+def _llm_patch(source: str, root_cause: str, suggested_fix: str) -> Tuple[Optional[str], str]:
+    prompt = f"""You are a security engineer. Fix the SQL injection vulnerabilities in this Python Flask file.
 
 ROOT CAUSE: {root_cause}
 
@@ -220,23 +227,27 @@ SOURCE FILE:
 {source}
 ```
 """
-        response = model.generate_content(prompt)
-        raw = response.text.strip()
-                               
-        if raw.startswith("```"):
-            parts = raw.split("```")
-            raw = parts[1]
-            if raw.startswith("python"):
-                raw = raw[6:]
-        return raw.strip()
-    except Exception as exc:
-        print(f"  [patch_agent] Gemini patch failed ({exc}), using template patch.")
-        return None
+    raw_response, provider_info = query_llm(prompt, timeout=90.0)
+    if not raw_response:
+        return None, provider_info
+
+    extracted = _extract_python_code(raw_response)
+    if not extracted:
+        return None, provider_info
+
+    # Validate syntax
+    try:
+        compile(extracted, "<patch_check>", "exec")
+    except SyntaxError as e:
+        print(f"  [patch_agent] {provider_info} generated invalid Python syntax ({e}), using template patch.")
+        return None, provider_info
+
+    return extracted, provider_info
 
 
-                                                                                
-                
-                                                                                
+# ==============================================================================
+# Unified Diff Generator
+# ==============================================================================
 
 def _make_diff(original: str, patched: str, filename: str) -> str:
     original_lines = original.splitlines(keepends=True)
@@ -250,9 +261,9 @@ def _make_diff(original: str, patched: str, filename: str) -> str:
     return "".join(diff)
 
 
-                                                                                
-            
-                                                                                
+# ==============================================================================
+# Public API
+# ==============================================================================
 
 def generate_and_apply_patch(
     target_file: str,
@@ -260,29 +271,26 @@ def generate_and_apply_patch(
     suggested_fix: str,
     iteration: int = 1,
 ) -> dict:
-
-
     with open(target_file, "r", encoding="utf-8") as fh:
         original_source = fh.read()
 
-                                             
+    # Backup original before modifying
     backup_path = target_file + ".original"
     if not os.path.exists(backup_path):
         shutil.copy2(target_file, backup_path)
 
-                                                                  
     is_real_target = "real_target_adapter" in target_file
 
     if is_real_target:
         patched_source = _apply_real_target_patch(original_source)
         strategy = "real_target_template"
     else:
-                                                 
-        patched_source = _gemini_patch(original_source, root_cause, suggested_fix)
-        strategy = "gemini"
+        patched_source, provider_info = _llm_patch(original_source, root_cause, suggested_fix)
+        strategy = provider_info
         if patched_source is None or patched_source.strip() == original_source.strip():
             patched_source = _apply_template_patch(original_source)
             strategy = "template"
+
 
     filename = os.path.basename(target_file)
     diff_text = _make_diff(original_source, patched_source, filename)

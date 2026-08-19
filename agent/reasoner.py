@@ -1,7 +1,7 @@
 import json
 import os
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
                                                                                 
               
@@ -111,40 +111,99 @@ def _mock_reason(sast_text: str, fuzz_text: str, dast_text: str) -> Vulnerabilit
                          
                                                                                 
 
-def _gemini_reason(prompt: str) -> VulnerabilityVerdict:
-    try:
-        import google.generativeai as genai
-        api_key = os.environ.get("GOOGLE_API_KEY", "")
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-1.5-flash")
-        response = model.generate_content(prompt)
-        raw = response.text.strip()
-                                          
-        if raw.startswith("```"):
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-        data = json.loads(raw)
-        return VulnerabilityVerdict(
-            confirmed=data.get("confirmed", False),
-            vuln_type=data.get("vuln_type", "UNKNOWN"),
-            confidence=data.get("confidence", "LOW"),
-            affected_file=data.get("affected_file", ""),
-            affected_line=int(data.get("affected_line", 0)),
-            reasoning=data.get("reasoning", ""),
-            root_cause=data.get("root_cause", ""),
-            suggested_fix=data.get("suggested_fix", ""),
-            need_more_evidence=data.get("need_more_evidence", False),
-        )
-    except Exception as exc:
-                                        
-        print(f"  [reasoner] Gemini call failed ({exc}), using mock reasoner.")
+import re
+from agent.llm_client import query_llm, get_active_provider
+
+def _extract_json_block(text: str) -> Optional[dict]:
+    """Extract and parse JSON object from LLM response with balanced brace extraction."""
+    if not text:
         return None
+    
+    clean_text = text.strip()
+    try:
+        return json.loads(clean_text)
+    except Exception:
+        pass
+
+    # If wrapped in markdown code blocks
+    if "```" in clean_text:
+        match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", clean_text, re.DOTALL)
+        if match:
+            try:
+                return json.loads(match.group(1).strip())
+            except Exception:
+                pass
+
+    # Balanced curly brace extraction
+    start_idx = clean_text.find("{")
+    if start_idx != -1:
+        depth = 0
+        end_idx = -1
+        in_string = False
+        escape = False
+        for i in range(start_idx, len(clean_text)):
+            c = clean_text[i]
+            if escape:
+                escape = False
+                continue
+            if c == "\\":
+                escape = True
+                continue
+            if c == '"':
+                in_string = not in_string
+                continue
+            if not in_string:
+                if c == '{':
+                    depth += 1
+                elif c == '}':
+                    depth -= 1
+                    if depth == 0:
+                        end_idx = i + 1
+                        break
+        if end_idx != -1:
+            candidate = clean_text[start_idx:end_idx]
+            try:
+                return json.loads(candidate)
+            except Exception:
+                cleaned_commas = re.sub(r",\s*([\}\]])", r"\1", candidate)
+                try:
+                    return json.loads(cleaned_commas)
+                except Exception:
+                    pass
+
+    return None
+
+def _llm_reason(prompt: str) -> Tuple[Optional[VulnerabilityVerdict], str]:
+    raw_response, provider_info = query_llm(prompt, response_format="json")
+    if not raw_response:
+        return None, provider_info
+
+    data = _extract_json_block(raw_response)
+    if not data or not isinstance(data, dict):
+        print(f"  [reasoner] Could not parse valid JSON from {provider_info} output, falling back to mock.")
+        return None, provider_info
+
+    try:
+        verdict = VulnerabilityVerdict(
+            confirmed=bool(data.get("confirmed", False)),
+            vuln_type=str(data.get("vuln_type", "UNKNOWN")),
+            confidence=str(data.get("confidence", "LOW")),
+            affected_file=str(data.get("affected_file", "target_app/app.py")),
+            affected_line=int(data.get("affected_line", 0) or 0),
+            reasoning=str(data.get("reasoning", "")),
+            root_cause=str(data.get("root_cause", "")),
+            suggested_fix=str(data.get("suggested_fix", "")),
+            need_more_evidence=bool(data.get("need_more_evidence", False)),
+        )
+        return verdict, provider_info
+    except Exception as exc:
+        print(f"  [reasoner] Error parsing verdict from {provider_info} ({exc})")
+        return None, provider_info
 
 
-                                                                                
-            
-                                                                                
+# ==============================================================================
+# Public API
+# ==============================================================================
 
 def reason(
     sast_text: str,
@@ -152,16 +211,17 @@ def reason(
     dast_text: str,
     source_snippet: str = "",
 ) -> VulnerabilityVerdict:
+    """
+    Correlate multi-tool findings and produce a vulnerability verdict.
+    Uses local Ollama LLM if available, or deterministic offline mock.
+    """
+    prompt = _build_prompt(sast_text, fuzz_text, dast_text, source_snippet)
+    verdict, provider_info = _llm_reason(prompt)
 
+    if verdict is not None:
+        print(f"  [reasoner] Correlated evidence using LLM provider: {provider_info}")
+        return verdict
 
-    api_key = os.environ.get("GOOGLE_API_KEY", "")
-    verdict = None
+    print(f"  [reasoner] Using deterministic rule-based mock reasoner.")
+    return _mock_reason(sast_text, fuzz_text, dast_text)
 
-    if api_key:
-        prompt = _build_prompt(sast_text, fuzz_text, dast_text, source_snippet)
-        verdict = _gemini_reason(prompt)
-
-    if verdict is None:
-        verdict = _mock_reason(sast_text, fuzz_text, dast_text)
-
-    return verdict

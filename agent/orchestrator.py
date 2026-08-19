@@ -16,6 +16,7 @@ from tools.sast_scanner import scan_directory, format_findings
 from tools.fuzzer import SQLiFuzzer, format_results as format_fuzz
 from tools.dast_runner import DASTRunner, format_evidence
 from agent.reasoner import reason
+from agent.llm_client import get_active_provider
 from agent.patch_agent import generate_and_apply_patch, restore_original, print_diff
 from harness.security_replay import run_security_regression, format_security_report
 from harness.regression_runner import run_regression, print_report
@@ -174,7 +175,8 @@ def run():
 
                                                                                 
     header("PHASE 4 — LLM Evidence Correlation")
-    info("Sending SAST + Fuzzer + DAST evidence to LLM reasoner …")
+    provider, model = get_active_provider()
+    info(f"Sending SAST + Fuzzer + DAST evidence to LLM reasoner [{provider}: {model}] …")
 
     with open(TARGET_FILE, "r") as f:
         source_snippet = f.read()

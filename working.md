@@ -65,9 +65,10 @@ flowchart TD
   * Categorizes evidence into explicit runtime proof indicators (`TAUTOLOGY_DUMP`, `DATA_LEAKAGE`, `SYNTAX_DISCLOSURE`).
 
 ### Phase 4: Multi-Modal LLM Evidence Correlation
-* **File:** `agent/reasoner.py`
-* **Technology:** Google Gemini 1.5 Flash (API) / Rule-based Deterministic Fallback Engine
+* **Files:** `agent/llm_client.py`, `agent/reasoner.py`
+* **Technology:** Local Ollama Engine (e.g. `qwen3:8b`, `llama3`, `deepseek-r1`) / Deterministic Offline Mock Fallback
 * **Methodology:**
+  * Auto-discovers locally hosted air-gapped LLMs on `127.0.0.1:11434` for 100% on-premise cybersecurity privacy with zero external internet connections.
   * Aggregates raw outputs from SAST, Fuzzer, and DAST phases into a unified evidence vector.
   * Enforces strict multi-factor verification rules: an LLM recommendation alone can **NEVER** declare a vulnerability confirmed. Confirmation requires matching static AST signals and dynamic runtime proof.
   * Produces structured diagnostic metadata:
@@ -141,9 +142,10 @@ Beyond-Sandbox/
 │
 ├── agent/                       # Autonomous Reasoning & Execution Layer
 │   ├── __init__.py
+│   ├── llm_client.py            # Local Ollama / Offline Mock LLM engine
 │   ├── orchestrator.py          # Master 8-phase pipeline orchestrator
 │   ├── patch_agent.py           # Patch generation, template fallback & diff engine
-│   └── reasoner.py              # Multi-modal evidence correlator (Gemini / Mock)
+│   └── reasoner.py              # Multi-modal evidence correlator (Local Ollama / Offline Mock)
 │
 ├── tools/                       # Multi-Modal Inspection Tools
 │   ├── __init__.py

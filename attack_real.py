@@ -15,6 +15,7 @@ from tools.sast_scanner    import scan_file, format_findings
 from tools.fuzzer          import SQLiFuzzer, format_results as fmt_fuzz
 from tools.dast_runner     import DASTRunner, format_evidence
 from agent.reasoner        import reason
+from agent.llm_client      import get_active_provider
 from agent.patch_agent     import generate_and_apply_patch, restore_original, print_diff
 from harness.regression_runner import run_regression, print_report
 
@@ -266,7 +267,8 @@ def run():
 
                                                                                 
     header("PHASE 4 — LLM Evidence Correlation")
-    info("Correlating SAST + Fuzzer + DAST evidence …")
+    provider, model = get_active_provider()
+    info(f"Correlating SAST + Fuzzer + DAST evidence [{provider}: {model}] …")
     with open(REAL_APP_FILE) as f:
         source = f.read()
 
