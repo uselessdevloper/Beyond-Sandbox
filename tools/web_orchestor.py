@@ -78,6 +78,7 @@ class TargetAppManager:
         self.processes.clear()
 
 
+# UPDATE 3: Clean up the fuzz_worker output mapping
 def fuzz_worker(file_path: str, port: int, findings: List[NormalizedFinding], src_dir: str) -> List[Dict]:
     base_url = f"http://127.0.0.1:{port}"
     resolver = TargetResolver(src_dir)
@@ -100,7 +101,7 @@ def fuzz_worker(file_path: str, port: int, findings: List[NormalizedFinding], sr
                 "resolved": target.resolved,
                 "unresolved_reason": target.unresolved_reason
             },
-            "vulnerable": result.vulnerable,
+            # Removed "vulnerable"
             "payloads_tried": result.payloads_tried,
             "error_state": result.error_state,
             "hits": [
@@ -109,7 +110,7 @@ def fuzz_worker(file_path: str, port: int, findings: List[NormalizedFinding], sr
                     "anomaly_type": h.anomaly_type,
                     "evidence_strength": h.evidence_strength,
                     "status_code": h.status_code,
-                    "confirmed": h.confirmed,
+                    # Removed "confirmed"
                     "response_snippet": h.response_snippet
                 } for h in result.hits
             ]
@@ -118,7 +119,7 @@ def fuzz_worker(file_path: str, port: int, findings: List[NormalizedFinding], sr
 
     return target_results
 
-
+    
 def run_orchestrator(sast_json: str, src_dir: str, base_port: int, max_apps: int, output_file: str):
     findings = parse_sast_json(sast_json)
     if not findings:
@@ -158,7 +159,7 @@ def run_orchestrator(sast_json: str, src_dir: str, base_port: int, max_apps: int
             "metadata": {
                 "total_targets_loaded": len(active_port_map),
                 "total_findings_processed": len(all_results),
-                "vulnerabilities_confirmed": sum(1 for r in all_results if r["vulnerable"]),
+                "total_anomalies_found": sum(len(r["hits"]) for r in all_results),
                 "ports_used": list(active_port_map.values())
             },
             "results": all_results
@@ -168,7 +169,7 @@ def run_orchestrator(sast_json: str, src_dir: str, base_port: int, max_apps: int
             json.dump(report, out, indent=2)
 
         logging.info(f"Fuzzing complete! Detailed JSON report saved to: {output_file}")
-        print(f"\n[+] Scan Complete — {report['metadata']['vulnerabilities_confirmed']} confirmed vulnerable endpoints across {len(active_port_map)} target apps.")
+        print(f"\n[+] Scan Complete — {report['metadata']['total_anomalies_found']} anomalies found across {len(active_port_map)} target apps.")
 
     finally:
         manager.stop_all()

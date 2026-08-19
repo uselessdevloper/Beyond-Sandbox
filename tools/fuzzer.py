@@ -45,6 +45,7 @@ class BaselineProfile:
     body_hash: str
     content_length: int
 
+# UPDATE 1: Clean up the Data Models
 @dataclass
 class FuzzHit:
     finding_id: str
@@ -55,12 +56,11 @@ class FuzzHit:
     status_code: int
     response_snippet: str
     anomaly_type: str
-    evidence_strength: str  # Weak, Medium, Strong, Very Strong
+    evidence_strength: str  
     baseline_time: float
     fuzz_time: float
-    confirmed: bool = False
-    reproducible: bool = False
     request_artifact: Dict = field(default_factory=dict)
+    # Removed 'confirmed' and 'reproducible'
 
 @dataclass
 class FuzzResult:
@@ -69,6 +69,7 @@ class FuzzResult:
     hits: List[FuzzHit] = field(default_factory=list)
     payloads_tried: int = 0
     error_state: str = ""
+    # Removed the @property def vulnerable(self) block
 
     @property
     def vulnerable(self) -> bool:
@@ -275,6 +276,7 @@ class SASTDrivenFuzzer:
         except Exception:
             return False
 
+        # UPDATE 2: Modify fuzz_target in SASTDrivenFuzzer
     def fuzz_target(self, finding: NormalizedFinding, target: TargetEndpoint) -> FuzzResult:
         result = FuzzResult(finding.finding_id, target)
         if not target.resolved:
@@ -287,14 +289,13 @@ class SASTDrivenFuzzer:
         if baseline.status_code == 404:
             result.error_state = "DEAD_ENDPOINT: Route returned 404 Not Found"
             return result
-        
-        # Intelligent Selection: Request only relevant payloads
+
         payloads = self.registry.get_payloads_for_finding(finding.rule_id)
-        
+
         for payload in payloads:
             result.payloads_tried += 1
             kwargs = {"timeout": self.timeout}
-            
+
             if target.location == "query": kwargs["params"] = {target.param: payload}
             elif target.location == "json": kwargs["json"] = {target.param: payload}
             else: kwargs["data"] = {target.param: payload}
@@ -310,10 +311,9 @@ class SASTDrivenFuzzer:
                 continue
 
             anomaly, strength = self._detect_anomaly(resp, baseline, fuzz_time)
-            
+
+            # Record EVERYTHING that causes an anomaly, without confirming or breaking
             if anomaly:
-                reproducible = self._verify_anomaly(url, target.method, kwargs, baseline)
-                
                 hit = FuzzHit(
                     finding_id=finding.finding_id,
                     endpoint=url, method=target.method, param=target.param,
@@ -321,16 +321,15 @@ class SASTDrivenFuzzer:
                     response_snippet=resp.text.replace("\n", " ").strip()[:200],
                     anomaly_type=anomaly, evidence_strength=strength,
                     baseline_time=baseline.response_time, fuzz_time=fuzz_time,
-                    confirmed=reproducible and strength in ["Strong", "Very Strong"],
-                    reproducible=reproducible,
                     request_artifact={"url": url, "method": target.method, "kwargs": kwargs}
                 )
                 result.hits.append(hit)
-                
-                if hit.confirmed:
-                    break
 
-        return result
+                # Removed: reproducibility check and the `if hit.confirmed: break` statement
+                # Now it will gather data for every anomalous payload it finds.
+
+        return result 
+    
 
 # ============================================================================
 # PARSERS & OUTPUT (COMPATIBILITY BOUNDARY)
