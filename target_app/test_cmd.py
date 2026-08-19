@@ -15,3 +15,9 @@ def vulnerable_subprocess(request):
 def safe_ls():
     # 3. Trusted constant string (no taint) - Scanner should ignore this
     os.system("ls -la")
+
+# --- ADD THIS BLOCK ---
+if __name__ == "__main__":
+    # If an argument is passed, pass it into the vulnerable function
+    if len(sys.argv) > 1:
+        vulnerable_ping()
