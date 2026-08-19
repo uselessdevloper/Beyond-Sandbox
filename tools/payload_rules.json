@@ -1,0 +1,14 @@
+{
+  "rules": {
+    "SQLI_WEB_001": [
+      "payloads/sqli_basic.txt"
+    ],
+    "CMD_WEB_001": [
+      "payloads/cmdi_basic.txt"
+    ],
+    "DEFAULT": [
+      "payloads/sqli_basic.txt",
+      "payloads/cmdi_basic.txt"
+    ]
+  }
+}

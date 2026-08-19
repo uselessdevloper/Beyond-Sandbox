@@ -360,17 +360,18 @@ class Scanner:
             self.diagnostics.append(f"Unexpected error in {filepath}: {e}")
 
 # -------------------------------------------------------------------------
+# REPORTERS UPDATED
+# -------------------------------------------------------------------------
+
+# -------------------------------------------------------------------------
 # REPORTERS
 # -------------------------------------------------------------------------
 
-def report_text(findings: List[Finding]):
-    print(f"SAST scan complete — {len(findings)} finding(s)\n")
-    
+def report_text(findings: List[Finding]) -> str:
     if not findings:
-        print("  ✓ No SAST findings.")
-        return
+        return "  ✓ No SAST findings."
         
-    lines = []
+    lines = [f"SAST scan complete — {len(findings)} finding(s)\n"]
     for f in findings:
         # Matches the exact spacing and basename formatting of the original script
         lines.append(
@@ -378,18 +379,18 @@ def report_text(findings: List[Finding]):
             f"    {f.description}\n"
             f"    snippet: {f.snippet}"
         )
-    print("\n".join(lines))
+    return "\n".join(lines)
 
-def report_json(findings: List[Finding]):
+def report_json(findings: List[Finding]) -> str:
     out = [{
         "file": f.file, "line": f.line, "col": f.col,
         "severity": f.severity, "rule_id": f.rule_id,
         "cwe": f.cwe, "description": f.description,
         "confidence": f.confidence, "snippet": f.snippet
     } for f in findings]
-    print(json.dumps(out, indent=2))
+    return json.dumps(out, indent=2)
 
-def report_sarif(findings: List[Finding]):
+def report_sarif(findings: List[Finding]) -> str:
     runs = {"tool": {"driver": {"name": "Advanced Python SAST", "rules": []}}, "results": []}
     for f in findings:
         runs["results"].append({
@@ -402,14 +403,14 @@ def report_sarif(findings: List[Finding]):
             }}]
         })
     sarif = {"version": "2.1.0", "$schema": "http://json.schemastore.org/sarif-2.1.0", "runs": [runs]}
-    print(json.dumps(sarif, indent=2))
+    return json.dumps(sarif, indent=2)
 
 # -------------------------------------------------------------------------
 # CLI ENTRYPOINT
 # -------------------------------------------------------------------------
 
 # -------------------------------------------------------------------------
-# CLI ENTRYPOINT
+# CLI ENTRYPOINT UPDATED
 # -------------------------------------------------------------------------
 
 def main():
@@ -430,6 +431,9 @@ def main():
     parser.add_argument("--config", default=default_config, help="Path to JSON rule config")
     parser.add_argument("--aggressive", action="store_true", help="Enable heuristic substring matching (higher recall, higher false positives)")
     
+    # --- NEW OUTPUT ARGUMENT ---
+    parser.add_argument("--output", "-o", help="Filepath to save the report (e.g., report.json)")
+    
     args = parser.parse_args()
 
     if not os.path.isdir(args.target_dir) and not os.path.isfile(args.target_dir):
@@ -443,12 +447,25 @@ def main():
         for diag in scanner.diagnostics:
             sys.stderr.write(f"[WARN] {diag}\n")
 
+    # Capture the returned string from the reporting functions
     if args.format == "text":
-        report_text(scanner.findings)
+        output_content = report_text(scanner.findings)
     elif args.format == "json":
-        report_json(scanner.findings)
+        output_content = report_json(scanner.findings)
     elif args.format == "sarif":
-        report_sarif(scanner.findings)
+        output_content = report_sarif(scanner.findings)
+        
+    # Write to file if specified, otherwise print to terminal
+    if args.output:
+        try:
+            with open(args.output, 'w', encoding='utf-8') as f:
+                f.write(output_content)
+            print(f"Report successfully saved to {args.output}")
+        except Exception as e:
+            print(f"Failed to write to output file: {e}")
+            sys.exit(1)
+    else:
+        print(output_content)
         
     if any(f.severity == "HIGH" or f.severity == "CRITICAL" for f in scanner.findings):
         sys.exit(1)
