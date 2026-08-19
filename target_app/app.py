@@ -26,9 +26,9 @@ def list_users():
 def get_user():
     user_id = request.args.get("id", "")
     conn = sqlite3.connect(DB_PATH)
-    query = "SELECT id, username, role, email FROM users WHERE id = " + user_id
+    query = "SELECT id, username, role, email FROM users WHERE id = ?"
     try:
-        rows = conn.execute(query).fetchall()
+        rows = conn.execute(query, (user_id,)).fetchall()
         conn.close()
         return jsonify([{"id": r[0], "username": r[1], "role": r[2], "email": r[3]} for r in rows])
     except Exception as e:
@@ -42,12 +42,9 @@ def login():
     username = data.get("username", "")
     password = data.get("password", "")
     conn = sqlite3.connect(DB_PATH)
-    query = (
-        f"SELECT id, username, role FROM users "
-        f"WHERE username = '{username}' AND password = '{password}'"
-    )
+    query = "SELECT id, username, role FROM users WHERE username = ? AND password = ?"
     try:
-        row = conn.execute(query).fetchone()
+        row = conn.execute(query, (username, password)).fetchone()
         conn.close()
         if row:
             return jsonify({"authenticated": True, "user": row[1], "role": row[2]})
@@ -61,9 +58,9 @@ def login():
 def search():
     q = request.args.get("q", "")
     conn = sqlite3.connect(DB_PATH)
-    query = "SELECT id, username, role FROM users WHERE username LIKE '%" + q + "%'"
+    query = "SELECT id, username, role FROM users WHERE username LIKE ?"
     try:
-        rows = conn.execute(query).fetchall()
+        rows = conn.execute(query, (f"%{q}%",)).fetchall()
         conn.close()
         return jsonify([{"id": r[0], "username": r[1], "role": r[2]} for r in rows])
     except Exception as e:
