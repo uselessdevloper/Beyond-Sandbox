@@ -73,4 +73,4 @@ def search():
 
 if __name__ == "__main__":
     init_db()
-    app.run(port=5000, debug=False)
+    app.run(port=5002, debug=False)

