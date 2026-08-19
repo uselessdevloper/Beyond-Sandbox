@@ -33,7 +33,17 @@ pip install -r requirements.txt
 python run.py
 ```
 
-Set `GOOGLE_API_KEY` for Gemini-powered reasoning (optional — falls back to rule-based mock).
+### 100% Air-Gapped Local CLI & Cybersecurity Privacy
+The system runs **completely local with zero internet connection or cloud egress**, keeping proprietary code and vulnerability intelligence secure on-premise:
+- **Local Ollama CLI / Engine**: Auto-detects local models (e.g. `qwen3:8b`, `llama3`, `deepseek-r1`, `codellama`).
+- **Deterministic Offline Engine**: Runs fully offline with deterministic rule-based correlation if no model daemon is running.
+- **Zero Internet Network Egress**: All tools (SAST, Fuzzer, DAST, Reasoner, Patch Agent, Regression) execute against `127.0.0.1` / local files.
+
+Environment variables:
+- `LLM_PROVIDER=ollama|mock|auto` (default: `auto`)
+- `OLLAMA_HOST=http://127.0.0.1:11434`
+- `OLLAMA_MODEL=qwen3:8b` (or any local model)
+- `OLLAMA_TIMEOUT=120.0`
 
 ## Project Structure
 
@@ -47,8 +57,9 @@ cyber_overwatch/
 │   ├── fuzzer.py         # HTTP fuzzer (20 SQLi payloads)
 │   └── dast_runner.py    # Runtime exploit confirmation
 ├── agent/
-│   ├── reasoner.py       # LLM evidence correlator (Gemini / mock)
-│   ├── patch_agent.py    # LLM patch generator + unified diff
+│   ├── llm_client.py     # Local Ollama / Offline Mock LLM engine
+│   ├── reasoner.py       # LLM multi-source evidence correlator
+│   ├── patch_agent.py    # Local LLM patch generator + unified diff
 │   └── orchestrator.py   # Master autonomous loop (8 phases)
 ├── harness/
 │   ├── security_replay.py    # 5 permanent security test cases (SEC-SQL-001…005)
@@ -111,4 +122,4 @@ cyber_overwatch/
 - **LLM reasons over real evidence** — not hallucinating; it receives SAST text + fuzz results + DAST probes
 - **Iterative loop** — if patch fails, agent gets failure evidence and retries (up to 3 rounds)
 - **Zero external SAST deps** — pure Python `ast` module, works anywhere
-- **Mock fallback** — runs fully offline without Gemini key using deterministic rule-based reasoning
+- **100% Local / Air-Gapped** — runs completely on your local CLI with zero internet connection or external cloud dependencies

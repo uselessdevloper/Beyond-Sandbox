@@ -363,22 +363,37 @@ class Scanner:
 # REPORTERS
 # -------------------------------------------------------------------------
 
-def report_text(findings: List[Finding]):
-    print(f"SAST scan complete — {len(findings)} finding(s)\n")
-    
+def format_findings(findings: List[Finding]) -> str:
     if not findings:
-        print("  ✓ No SAST findings.")
-        return
-        
-    lines = []
+        return "  ✓ No SAST findings."
+    lines = [f"SAST scan complete — {len(findings)} finding(s)\n"]
     for f in findings:
-        # Matches the exact spacing and basename formatting of the original script
         lines.append(
             f"  [{f.severity}] {f.rule_id} @ {os.path.basename(f.file)}:{f.line}\n"
             f"    {f.description}\n"
             f"    snippet: {f.snippet}"
         )
-    print("\n".join(lines))
+    return "\n".join(lines)
+
+def scan_file(filepath: str, config_path: Optional[str] = None, aggressive: bool = False) -> List[Finding]:
+    if config_path is None:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        config_path = os.path.join(script_dir, "sast_config.json")
+    scanner = Scanner(os.path.dirname(filepath) or ".", config_path=config_path, aggressive=aggressive)
+    scanner.analyze_file(filepath)
+    return scanner.findings
+
+def scan_directory(target_dir: str, config_path: Optional[str] = None, aggressive: bool = False) -> List[Finding]:
+    if config_path is None:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        config_path = os.path.join(script_dir, "sast_config.json")
+    scanner = Scanner(target_dir, config_path=config_path, aggressive=aggressive)
+    scanner.scan()
+    return scanner.findings
+
+def report_text(findings: List[Finding]):
+    print(format_findings(findings))
+
 
 def report_json(findings: List[Finding]):
     out = [{
